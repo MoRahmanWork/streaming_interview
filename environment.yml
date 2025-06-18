@@ -11,3 +11,4 @@ dependencies:
   - pylint=3.0.4
   - pytest-cov=5.0.0
   - pytest-watcher=0.4.3
+  - pydantic=2.11.7
