@@ -41,7 +41,7 @@ def _cmd_generate_snapshot_output(stations: StationsMonitor, timestamp: int) -> 
     output = SnapshotOutput(
         type="snapshot",
         asOf=timestamp,
-        stations=stations
+        stations=stations.stations
     )
     return output.model_dump()
 
