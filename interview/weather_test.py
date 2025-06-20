@@ -1,7 +1,5 @@
-from . import weather
-import pytest
+import time
 import unittest
-from typing import Union
 from pydantic import ValidationError
 
 from interview.models.sampleEvent import SampleEvent
@@ -9,12 +7,14 @@ from interview.models.controlEvent import ControlEvent
 from interview.models.inputEvent import InputEvent
 from interview.models.resetOutput import ResetOutput
 from interview.models.snapshotOutput import SnapshotOutput
-from interview.models.stations import StationsMonitor, StationMetaData, StationOutputMetaData
+from interview.models.stations import StationsMonitor
+from . import weather
 
 
 class TestWeather(unittest.TestCase):
     
-    def data(self):
+    @staticmethod
+    def data():
         return {
             "type"       : "sample",
             "stationName": "Foster Weather Station",
@@ -89,7 +89,7 @@ class TestWeather(unittest.TestCase):
     
     def test__process_samples(self):
         stations = StationsMonitor()
-        assert stations.stations == {}
+        assert not stations.stations
         
         # test a simple sample input
         sample_data = {
@@ -108,8 +108,8 @@ class TestWeather(unittest.TestCase):
             stations={'Foster Weather Station': {'high': 37.1, 'low': 37.1}}
         )
         expected_timestamp = 1672531200000
-        self.assertEquals(actual_timestamp, expected_timestamp, msg="simple sample timestamp")
-        self.assertEquals(actual_stations, expected_stations, msg="simple sample stations")
+        self.assertEqual(actual_timestamp, expected_timestamp, msg="simple sample timestamp")
+        self.assertEqual(actual_stations, expected_stations, msg="simple sample stations")
         
         # test a new high temp sample same station
         new_data_high_temp = {
@@ -127,8 +127,8 @@ class TestWeather(unittest.TestCase):
             stations={'Foster Weather Station': {'high': 3700.1, 'low': 37.1}}
         )
         expected_timestamp = 1672531200001
-        self.assertEquals(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
-        self.assertEquals(actual_stations, expected_stations, msg="high temp sample stations")
+        self.assertEqual(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
+        self.assertEqual(actual_stations, expected_stations, msg="high temp sample stations")
         
         # test a new low temp sample same station
         new_data_low_temp = {
@@ -146,8 +146,8 @@ class TestWeather(unittest.TestCase):
             stations={'Foster Weather Station': {'high': 3700.1, 'low': -0.1}}
         )
         expected_timestamp = 1672531200002
-        self.assertEquals(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
-        self.assertEquals(actual_stations, expected_stations, msg="high temp sample stations")
+        self.assertEqual(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
+        self.assertEqual(actual_stations, expected_stations, msg="high temp sample stations")
         
         # test a new sample station
         new_data_low_temp = {
@@ -166,8 +166,8 @@ class TestWeather(unittest.TestCase):
                       'Beckton Weather Station': {'high': 50.0, 'low': 50.0}}
         )
         expected_timestamp = 1672531200003
-        self.assertEquals(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
-        self.assertEquals(actual_stations, expected_stations, msg="high temp sample stations")
+        self.assertEqual(actual_timestamp, expected_timestamp, msg="high temp sample timestamp")
+        self.assertEqual(actual_stations, expected_stations, msg="high temp sample stations")
     
     def test__cmd_generate_snapshot_output(self):
         stations = StationsMonitor(
@@ -184,7 +184,7 @@ class TestWeather(unittest.TestCase):
             stations={'Foster Weather Station' : {'high': 3700.1, 'low': -0.1},
                       'Beckton Weather Station': {'high': 50.0, 'low': 50.0}}
         ).model_dump()
-        self.assertEquals(actual_snapshot, expected_snapshot)
+        self.assertEqual(actual_snapshot, expected_snapshot)
     
     def test__cmd_generate_reset_output(self):
         timestamp = 1672531200003
@@ -195,9 +195,12 @@ class TestWeather(unittest.TestCase):
             type='reset',
             asOf=1672531200003
         ).model_dump()
-        self.assertEquals(actual_reset, expected_reset)
+        self.assertEqual(actual_reset, expected_reset)
     
     def test_process_events_sample_deterministic(self):
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
         sample_data = {
             "type"       : "sample",
             "stationName": "Foster Weather Station",
@@ -207,9 +210,12 @@ class TestWeather(unittest.TestCase):
         events = [sample_data]
         gen_pe = weather.process_events(events=events)
         yield_1 = gen_pe.__next__()
-        self.assertEquals(yield_1, sample_data)
+        self.assertEqual(yield_1, sample_data)
     
     def test_process_events_sample_stochastic(self):
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
         sample_data = {
             "type"       : "sample",
             "stationName": "Foster Weather Station",
@@ -227,13 +233,18 @@ class TestWeather(unittest.TestCase):
         gen_pe = weather.process_events(events=batch_events)
         for i in range(len(batch_events)):
             yield_data = gen_pe.__next__()
-            self.assertEquals(yield_data, batch_events[i], msg="multiple samples -- generator")
+            self.assertEqual(yield_data, batch_events[i], msg="multiple samples -- generator")
         
         actual = list(weather.process_events(events=batch_events))
         expected = batch_events
-        self.assertEquals(actual, expected, msg="multiple samples -- list")
+        self.assertEqual(actual, expected, msg="multiple samples -- list")
     
     def test_performance(self):
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
+        start_time = time.time()
+        
         # 1M rows
         # number_of_sample_messages = 1_000_000
         number_of_sample_messages = 10_000
@@ -248,7 +259,7 @@ class TestWeather(unittest.TestCase):
         # Deterministic same station
         events = [sample_data.copy()] * number_of_sample_messages
         output = list(weather.process_events(events=events))
-        self.assertEquals(len(output), number_of_sample_messages)
+        self.assertEqual(len(output), number_of_sample_messages)
         
         # Deterministic multiple stations
         # 1M rows
@@ -257,7 +268,7 @@ class TestWeather(unittest.TestCase):
             current_event = events[i].copy()
             events[i]["stationName"] = current_event["stationName"] + str(i)
         output = list(weather.process_events(events=events))
-        self.assertEquals(len(output), number_of_sample_messages)
+        self.assertEqual(len(output), number_of_sample_messages)
         
         cmd_snapshot = {"type": "control", "command": "snapshot"}
         new_event = [cmd_snapshot]
@@ -279,7 +290,10 @@ class TestWeather(unittest.TestCase):
                 'Foster Weather Station9': {'high': 37.1, 'low' : 37.1}
             }
         }]
-        self.assertEquals(actual, expected)
+        self.assertEqual(actual, expected)
+        
+        end_time = time.time()
+        print(f"Time taken: {end_time - start_time}")
     
     def test_process_events_validation_error(self):
         # event type error
@@ -319,6 +333,9 @@ class TestWeather(unittest.TestCase):
             weather.process_events(events).__next__()
     
     def test_process_events_cmd_snapshot(self):
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
         number_of_sample_messages = 10
         sample_data = {
             "type"       : "sample",
@@ -331,7 +348,7 @@ class TestWeather(unittest.TestCase):
             current_event = events[i].copy()
             events[i]["stationName"] = current_event["stationName"] + str(i)
         output = list(weather.process_events(events=events))
-        self.assertEquals(len(output), number_of_sample_messages)
+        self.assertEqual(len(output), number_of_sample_messages)
         
         cmd_snapshot = {"type": "control", "command": "snapshot"}
         new_event = [cmd_snapshot]
@@ -352,7 +369,7 @@ class TestWeather(unittest.TestCase):
                 'Foster Weather Station9': {'high': 37.1, 'low': 37.1}
             }
         }]
-        self.assertEquals(actual, expected)
+        self.assertEqual(actual, expected)
         
         # new timestamp and new temperature
         forward_time = {
@@ -382,9 +399,12 @@ class TestWeather(unittest.TestCase):
                 'Foster Weather Station9': {'high': 37.1, 'low': 37.1}
             }
         }]
-        self.assertEquals(actual, expected)
+        self.assertEqual(actual, expected)
     
     def test_process_events_cmd_reset(self):
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
         number_of_sample_messages = 2
         sample_data = {
             "type"       : "sample",
@@ -397,7 +417,7 @@ class TestWeather(unittest.TestCase):
             current_event = events[i].copy()
             events[i]["stationName"] = current_event["stationName"] + str(i)
         output = list(weather.process_events(events=events))
-        self.assertEquals(len(output), number_of_sample_messages)
+        self.assertEqual(len(output), number_of_sample_messages)
         
         # reset data
         cmd_reset = {"type": "control", "command": "reset"}
@@ -407,21 +427,24 @@ class TestWeather(unittest.TestCase):
             'type'    : 'reset',
             'asOf'    : 1672531200000,
         }]
-        self.assertEquals(actual, expected)
-        self.assertEquals(weather.stations.stations, {})
+        self.assertEqual(actual, expected)
+        self.assertEqual(weather.stations_montior.stations, {})
         
         # a new reset after reset should be empty.
         cmd_reset = {"type": "control", "command": "reset"}
         new_event = [cmd_reset]
         actual = list(weather.process_events(events=new_event))
         expected = []
-        self.assertEquals(actual, expected)
+        self.assertEqual(actual, expected)
     
     def test_process_events_real_time_simulation(self):
-        ### Your goal in this interview is to change the program to correctly process
+        # Your goal in this interview is to change the program to correctly process
         # these messages, and produce snapshots of the state when requested.
         # The incoming messages types are heterogeneous, and can include both samples
         # from weather stations, and control messages.
+        weather.stations_montior.reset()
+        weather.latest_timestamp = None
+        
         forest_data = {
             "type"       : "sample",
             "stationName": "Foster Weather Station",
@@ -524,11 +547,4 @@ class TestWeather(unittest.TestCase):
             generator_pe = weather.process_events(events=entries[i])
             for j in range(len(entries[i])):
                 actual = generator_pe.__next__()
-                self.assertEquals(actual, expected[i][j])
-                
-        
-        
-        
-        
-        
-        
+                self.assertEqual(actual, expected[i][j])

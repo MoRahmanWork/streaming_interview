@@ -1,10 +1,12 @@
-from pydantic import BaseModel, StrictStr, StrictInt, StrictFloat
 from typing import Dict
+from pydantic import BaseModel, StrictStr, StrictInt, StrictFloat
 
 
 class StationMetaData(BaseModel):
     stationName: StrictStr  # A human-readable string identifying the weather station
-    timestamp: StrictInt  # A UTC millisecond precision timestamp representing when the sample was taken, as an integer number. This timestamp is guaranteed to increase in subsequent samples.
+    timestamp: StrictInt  # A UTC millisecond precision timestamp representing when the sample
+    # was taken,
+    # as an integer number. This timestamp is guaranteed to increase in subsequent samples.
     temperature: StrictFloat  # The floating point Fahrenheit temperature
 
 
@@ -29,6 +31,6 @@ class StationsMonitor(BaseModel):
                 'low' : other.temperature
             }
         return StationsMonitor(stations=updated)
-    
+        
     def reset(self) -> None:
         self.stations.clear()

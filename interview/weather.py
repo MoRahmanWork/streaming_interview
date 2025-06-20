@@ -1,26 +1,19 @@
-from typing import (
-    Any, Dict, Iterable, Generator,
-    Union, Literal, Optional, Tuple)
-from pydantic import ValidationError
+from typing import Any, Dict, Iterable, Generator, Optional, Tuple
 from logging import getLogger
-import json
+from pydantic import ValidationError
 
 from interview.models.sampleEvent import SampleEvent
-from interview.models.controlEvent import ControlEvent
 from interview.models.inputEvent import InputEvent
 from interview.models.resetOutput import ResetOutput
 from interview.models.snapshotOutput import SnapshotOutput
 from interview.models.eventTypes import EventTypes, CommandTypes
-from interview.models.stations import StationsMonitor, StationMetaData, StationOutputMetaData
+from interview.models.stations import StationsMonitor, StationMetaData
 
-
-outputEvent = Union[SnapshotOutput, ResetOutput]
 
 logger = getLogger(__name__)
 
-
 # Initialize
-stations: StationsMonitor = StationsMonitor()  # monitor high/low temp per station
+stations_montior: StationsMonitor = StationsMonitor()  # monitor high/low temp per station
 latest_timestamp: Optional[int] = None  # Monitor timestamp
 
 
@@ -72,7 +65,7 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
     :return: Output messages json dicts {str, Any}
     """
     for line in events:
-        global stations
+        global stations_montior
         global latest_timestamp
         data = {"event": line}
         
@@ -94,7 +87,7 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
             case EventTypes.sample.name:
                 # Process Sample Events
                 logger.info("Sample events")
-                stations, latest_timestamp = _process_samples(msg, stations)
+                stations_montior, latest_timestamp = _process_samples(msg, stations_montior)
                 yield msg.model_dump()
             case EventTypes.control.name:
                 # Process Control Events
@@ -103,13 +96,13 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
                     case CommandTypes.snapshot.name:
                         # Process Snapshot Commands
                         logger.info("snapshot")
-                        if stations and latest_timestamp is not None:
-                            yield _cmd_generate_snapshot_output(stations, latest_timestamp)
+                        if stations_montior and latest_timestamp is not None:
+                            yield _cmd_generate_snapshot_output(stations_montior, latest_timestamp)
                     case CommandTypes.reset.name:
                         # Process Reset Commands
                         logger.info("reset")
-                        if stations and latest_timestamp is not None:
-                            stations.reset()
+                        if stations_montior and latest_timestamp is not None:
+                            stations_montior.reset()
                             asof_timestamp = latest_timestamp
                             latest_timestamp = None
                             yield _cmd_generate_reset_output(asof_timestamp)

@@ -9,4 +9,3 @@ class EventTypes(Enum):
 class CommandTypes(Enum):
     snapshot = auto()
     reset = auto()
-
