@@ -14,6 +14,14 @@ from interview.models.stations import StationsMonitor, StationMetaData, StationO
 
 class TestWeather(unittest.TestCase):
     
+    def data(self):
+        return {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+    
     def test_model_input_sample(self):
         sample_data = {
             "type"       : "sample",
@@ -189,7 +197,7 @@ class TestWeather(unittest.TestCase):
         ).model_dump()
         self.assertEquals(actual_reset, expected_reset)
     
-    def test_process_events(self):
+    def test_process_events_sample_deterministic(self):
         sample_data = {
             "type"       : "sample",
             "stationName": "Foster Weather Station",
@@ -197,6 +205,330 @@ class TestWeather(unittest.TestCase):
             "temperature": 37.1
         }
         events = [sample_data]
-        list(weather.process_events(events=events))
-        # TODO -- process events
-
+        gen_pe = weather.process_events(events=events)
+        yield_1 = gen_pe.__next__()
+        self.assertEquals(yield_1, sample_data)
+    
+    def test_process_events_sample_stochastic(self):
+        sample_data = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        data_1 = sample_data.copy()
+        data_2 = sample_data.copy()
+        data_2["timestamp"] = 1672531200001
+        data_3 = sample_data.copy()
+        data_3["timestamp"] = 1672531200002
+        data_4 = sample_data.copy()
+        data_4["timestamp"] = 1672531200003
+        batch_events = [data_1, data_2, data_3, data_4]
+        gen_pe = weather.process_events(events=batch_events)
+        for i in range(len(batch_events)):
+            yield_data = gen_pe.__next__()
+            self.assertEquals(yield_data, batch_events[i], msg="multiple samples -- generator")
+        
+        actual = list(weather.process_events(events=batch_events))
+        expected = batch_events
+        self.assertEquals(actual, expected, msg="multiple samples -- list")
+    
+    def test_performance(self):
+        # 1M rows
+        # number_of_sample_messages = 1_000_000
+        number_of_sample_messages = 10_000
+        number_of_sample_messages = 10
+        sample_data = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        
+        # Deterministic same station
+        events = [sample_data.copy()] * number_of_sample_messages
+        output = list(weather.process_events(events=events))
+        self.assertEquals(len(output), number_of_sample_messages)
+        
+        # Deterministic multiple stations
+        # 1M rows
+        events = [sample_data.copy() for _ in range(number_of_sample_messages)]
+        for i in range(number_of_sample_messages):
+            current_event = events[i].copy()
+            events[i]["stationName"] = current_event["stationName"] + str(i)
+        output = list(weather.process_events(events=events))
+        self.assertEquals(len(output), number_of_sample_messages)
+        
+        cmd_snapshot = {"type": "control", "command": "snapshot"}
+        new_event = [cmd_snapshot]
+        actual = list(weather.process_events(events=new_event))
+        expected = [{
+            'type'    : 'snapshot',
+            'asOf': 1672531200000,
+            'stations': {
+                'Foster Weather Station' : {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station0': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station1': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station2': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station3': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station4': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station5': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station6': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station7': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station8': {'high': 37.1, 'low' : 37.1},
+                'Foster Weather Station9': {'high': 37.1, 'low' : 37.1}
+            }
+        }]
+        self.assertEquals(actual, expected)
+    
+    def test_process_events_validation_error(self):
+        # event type error
+        sample_data = {
+            "type"       : "asd",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        events = [sample_data]
+        with self.assertRaises(ValidationError):
+            weather.process_events(events).__next__()
+        
+        # dtype errors
+        # stationName dtype error
+        station_dtype = sample_data.copy()
+        station_dtype["stationName"] = 1000
+        events = [station_dtype]
+        with self.assertRaises(ValidationError):
+            weather.process_events(events).__next__()
+        # timestamp dtype error
+        timestamp_dtype = sample_data.copy()
+        timestamp_dtype["timestamp"] = "None"
+        events = [timestamp_dtype]
+        with self.assertRaises(ValidationError):
+            weather.process_events(events).__next__()
+        # temperature dtype error
+        temperature_dtype = sample_data.copy()
+        temperature_dtype["temperature"] = "None"
+        events = [temperature_dtype]
+        with self.assertRaises(ValidationError):
+            weather.process_events(events).__next__()
+        # command- dtype error
+        command_dtype = {"type": "command","command":123}
+        events = [command_dtype]
+        with self.assertRaises(ValidationError):
+            weather.process_events(events).__next__()
+    
+    def test_process_events_cmd_snapshot(self):
+        number_of_sample_messages = 10
+        sample_data = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        events = [sample_data.copy() for _ in range(number_of_sample_messages)]
+        for i in range(number_of_sample_messages):
+            current_event = events[i].copy()
+            events[i]["stationName"] = current_event["stationName"] + str(i)
+        output = list(weather.process_events(events=events))
+        self.assertEquals(len(output), number_of_sample_messages)
+        
+        cmd_snapshot = {"type": "control", "command": "snapshot"}
+        new_event = [cmd_snapshot]
+        actual = list(weather.process_events(events=new_event))
+        expected = [{
+            'type'    : 'snapshot',
+            'asOf'    : 1672531200000,
+            'stations': {
+                'Foster Weather Station0': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station1': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station2': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station3': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station4': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station5': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station6': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station7': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station8': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station9': {'high': 37.1, 'low': 37.1}
+            }
+        }]
+        self.assertEquals(actual, expected)
+        
+        # new timestamp and new temperature
+        forward_time = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station0",
+            "timestamp"  : 1672531200011,
+            "temperature": 111.1
+        }
+        cmd_snapshot = {"type": "control", "command": "snapshot"}
+        new_event = [forward_time, cmd_snapshot]
+        actual = list(weather.process_events(events=new_event))
+        actual = [actual[-1]]
+        
+        expected =[{
+            'type': 'snapshot',
+            'asOf': 1672531200011,
+            'stations': {
+                'Foster Weather Station0': {'high': 111.1, 'low': 37.1},
+                'Foster Weather Station1': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station2': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station3': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station4': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station5': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station6': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station7': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station8': {'high': 37.1, 'low': 37.1},
+                'Foster Weather Station9': {'high': 37.1, 'low': 37.1}
+            }
+        }]
+        self.assertEquals(actual, expected)
+    
+    def test_process_events_cmd_reset(self):
+        number_of_sample_messages = 2
+        sample_data = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        events = [sample_data.copy() for _ in range(number_of_sample_messages)]
+        for i in range(number_of_sample_messages):
+            current_event = events[i].copy()
+            events[i]["stationName"] = current_event["stationName"] + str(i)
+        output = list(weather.process_events(events=events))
+        self.assertEquals(len(output), number_of_sample_messages)
+        
+        # reset data
+        cmd_reset = {"type": "control", "command": "reset"}
+        new_event = [cmd_reset]
+        actual = list(weather.process_events(events=new_event))
+        expected = [{
+            'type'    : 'reset',
+            'asOf'    : 1672531200000,
+        }]
+        self.assertEquals(actual, expected)
+        self.assertEquals(weather.stations.stations, {})
+        
+        # a new reset after reset should be empty.
+        cmd_reset = {"type": "control", "command": "reset"}
+        new_event = [cmd_reset]
+        actual = list(weather.process_events(events=new_event))
+        expected = []
+        self.assertEquals(actual, expected)
+    
+    def test_process_events_real_time_simulation(self):
+        ### Your goal in this interview is to change the program to correctly process
+        # these messages, and produce snapshots of the state when requested.
+        # The incoming messages types are heterogeneous, and can include both samples
+        # from weather stations, and control messages.
+        forest_data = {
+            "type"       : "sample",
+            "stationName": "Foster Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 37.1
+        }
+        desert_data = {
+            "type"       : "sample",
+            "stationName": "Desert Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": 100.0
+        }
+        ocean_data = {
+            "type"       : "sample",
+            "stationName": "Ocean Weather Station",
+            "timestamp"  : 1672531200000,
+            "temperature": -30.0
+        }
+        
+        cmd_snapshot = {"type": "control", "command": "snapshot"}
+        cmd_reset = {"type": "control", "command": "reset"}
+        
+        # first entry, base data for three regions stations
+        first_entry = [
+            forest_data,
+            desert_data,
+            ocean_data
+        ]
+        # second entry, increase and decrease temp for next timestamp, and get snapshot cmd
+        forest_data2 = forest_data.copy()
+        forest_data2["timestamp"] += 10
+        forest_data2["temperature"] -= 10
+        desert_data2 = desert_data.copy()
+        desert_data2["timestamp"] += 10
+        desert_data2["temperature"] += 10
+        second_entry = [
+            forest_data2,
+            desert_data2,
+            cmd_snapshot
+        ]
+        # third entry, reset command
+        third_entry = [
+            cmd_reset
+        ]
+        # forth entry, decrease temp for next timestamp ocean data and get snapshot
+        ocean_data2 = ocean_data.copy()
+        ocean_data2["timestamp"] += 100
+        ocean_data2["temperature"] -= 10
+        forth_entry = [
+            ocean_data2,
+            cmd_snapshot
+        ]
+        
+        entries = [first_entry, second_entry, third_entry, forth_entry]
+        expected = [
+            [
+                {'type': 'sample',
+                 'stationName': 'Foster Weather Station',
+                 'timestamp': 1672531200000,
+                 'temperature': 37.1},
+                {'type'       : 'sample',
+                 'stationName': 'Desert Weather Station',
+                 'timestamp': 1672531200000,
+                 'temperature': 100.0},
+                {'type'       : 'sample',
+                 'stationName': 'Ocean Weather Station',
+                 'timestamp': 1672531200000,
+                 'temperature': -30.0}
+            ], # first entry
+            [
+                {'type'       : 'sample',
+                 'stationName': 'Foster Weather Station',
+                 'timestamp': 1672531200010,
+                 'temperature': 27.1},
+                {'type'       : 'sample',
+                 'stationName': 'Desert Weather Station',
+                 'timestamp': 1672531200010,
+                 'temperature': 110.0},
+                {'type'    : 'snapshot',
+                 'asOf': 1672531200010,
+                 'stations': {'Foster Weather Station': {'high': 37.1, 'low': 27.1},
+                              'Desert Weather Station': {'high': 110.0, 'low': 100.0},
+                              'Ocean Weather Station' : {'high': -30.0, 'low': -30.0}}}
+            ], # second entry
+            [
+                {'type': 'reset', 'asOf': 1672531200010}
+            ], # third entry
+            [
+                {'type'       : 'sample',
+                 'stationName': 'Ocean Weather Station',
+                 'timestamp': 1672531200100,
+                 'temperature': -40.0},
+                {'type'    : 'snapshot',
+                 'asOf': 1672531200100,
+                 'stations': {'Ocean Weather Station' : {'high': -40.0, 'low': -40.0}}}
+            ], # forth entry
+        ]
+        
+        for i in range(len(entries)):
+            generator_pe = weather.process_events(events=entries[i])
+            for j in range(len(entries[i])):
+                actual = generator_pe.__next__()
+                self.assertEquals(actual, expected[i][j])
+                
+        
+        
+        
+        
+        
+        

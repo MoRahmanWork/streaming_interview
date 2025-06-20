@@ -19,6 +19,11 @@ outputEvent = Union[SnapshotOutput, ResetOutput]
 logger = getLogger(__name__)
 
 
+# Initialize
+stations: StationsMonitor = StationsMonitor()  # monitor high/low temp per station
+latest_timestamp: Optional[int] = None  # Monitor timestamp
+
+
 def _process_samples(sample_msg: SampleEvent,
                      stations: StationsMonitor) -> Tuple[StationsMonitor, int]:
     """
@@ -66,11 +71,9 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
     :param events: an Iterable of input dicts {str: Any} messages
     :return: Output messages json dicts {str, Any}
     """
-    # Initialize
-    stations: StationsMonitor = StationsMonitor()  # monitor high/low temp per station
-    latest_timestamp: Optional[int] = None  # Monitor timestamp
-    
     for line in events:
+        global stations
+        global latest_timestamp
         data = {"event": line}
         
         try:
@@ -82,7 +85,7 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
             # Covers Unknown Event Types and Unknown Control Types w/ Literal reqs,
             # Covers required missing values.
             # Raise Error -- very informative as Pydantic Validation Error for all fields.
-            raise ValidationError(err_msg)
+            raise ve
         
         # Obtain the Standardized Event Object
         msg = line_event.event
@@ -90,29 +93,31 @@ def process_events(events: Iterable[dict[str, Any]]) -> Generator[dict[str, Any]
         match msg.type:
             case EventTypes.sample.name:
                 # Process Sample Events
-                print("Sample")
+                logger.info("Sample events")
                 stations, latest_timestamp = _process_samples(msg, stations)
-                yield line
+                yield msg.model_dump()
             case EventTypes.control.name:
                 # Process Control Events
-                print("control")
+                logger.info("Control events")
                 match msg.command:
                     case CommandTypes.snapshot.name:
                         # Process Snapshot Commands
-                        print("snapshot")
+                        logger.info("snapshot")
                         if stations and latest_timestamp is not None:
                             yield _cmd_generate_snapshot_output(stations, latest_timestamp)
                     case CommandTypes.reset.name:
                         # Process Reset Commands
-                        print("reset")
-                        yield _cmd_generate_reset_output(latest_timestamp)
-                        stations.reset()
-                        latest_timestamp = None
+                        logger.info("reset")
+                        if stations and latest_timestamp is not None:
+                            stations.reset()
+                            asof_timestamp = latest_timestamp
+                            latest_timestamp = None
+                            yield _cmd_generate_reset_output(asof_timestamp)
                     case _:
                         # Can't process the Command type
                         # -- Type is added to InputEvent, but no logic handle implemented
-                        print("Not implemented Command Type")
+                        logger.info("Not implemented Command Type")
             case _:
                 # Can't process the Event type
                 # - Type added to InputEvent, but no logic handle implemented
-                print("Not implemented Event Type")
+                logger.info("Not implemented Event Type")

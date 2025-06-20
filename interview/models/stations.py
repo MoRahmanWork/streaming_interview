@@ -30,5 +30,5 @@ class StationsMonitor(BaseModel):
             }
         return StationsMonitor(stations=updated)
     
-    def reset(self) -> "StationsMonitor":
-        return StationsMonitor(stations={})
+    def reset(self) -> None:
+        self.stations.clear()
